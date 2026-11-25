@@ -111,7 +111,7 @@ const projectName = id => (STATE.projects.find(x => x.id === id)?.name) || '-';
 const unitLabel = id => { const u = STATE.units.find(x => x.id === id); return u ? `${u.building} ${u.room_no}` : '-'; };
 const userName = id => (STATE.users.find(x => x.id === id)?.display_name) || (id ? '#' + id : '-');
 const statCard = (color, ico, label, value, sub) => `<div class="card stat-card"><div class="stat-icon ${color}">${ico}</div>
-  <div><div class="stat-label">${esc(label)}</div><div class="stat-value">${value}</div><div class="stat-sub">${esc(sub)}</div></div></div>`;
+  <div class="stat-body"><div class="stat-label">${esc(label)}</div><div class="stat-value">${value}</div><div class="stat-sub">${esc(sub)}</div></div></div>`;
 function detailItem(label, value) { return `<div class="detail-item"><label>${esc(label)}</label><div>${value || '-'}</div></div>`; }
 
 /* ---------------- 登录 / 启动 ---------------- */
