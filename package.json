@@ -1,0 +1,15 @@
+{
+  "name": "zhenghe-contracts",
+  "version": "1.0.0",
+  "description": "正合合同 —— 房地产销售合同管理系统，不多不少，正合所需",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "backup": "node backup.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "license": "MIT",
+  "dependencies": {}
+}
