@@ -296,4 +296,6 @@ tbody tr:last-child td{border-bottom:none}
 .task-row:last-child{border-bottom:none}
 .chart-row.clickable-row:hover,.alert-item.clickable-row:hover,.task-row.clickable-row:hover{background:#f1f5f9}
 table tr.clickable-row:hover{background:#f1f5f9}
+.clickable-card{cursor:pointer;transition:box-shadow .15s,border-color .15s,transform .15s}
+.clickable-card:hover{border-color:var(--primary);box-shadow:0 6px 16px rgba(37,99,235,.14);transform:translateY(-1px)}
 @media(max-width:700px){.chart-row{grid-template-columns:80px 1fr 70px}.unit-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}}

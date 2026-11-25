@@ -110,8 +110,16 @@ const customerName = id => (STATE.customers.find(x => x.id === id)?.name) || '-'
 const projectName = id => (STATE.projects.find(x => x.id === id)?.name) || '-';
 const unitLabel = id => { const u = STATE.units.find(x => x.id === id); return u ? `${u.building} ${u.room_no}` : '-'; };
 const userName = id => (STATE.users.find(x => x.id === id)?.display_name) || (id ? '#' + id : '-');
-const statCard = (color, ico, label, value, sub) => `<div class="card stat-card"><div class="stat-icon ${color}">${ico}</div>
+const statCard = (color, ico, label, value, sub, go, filter) => `<div class="card stat-card${go ? ' clickable-card' : ''}" ${go ? `data-goto="${go}"` : ''} ${filter ? `data-filter="${esc(JSON.stringify(filter))}"` : ''} ${go ? 'title="查看明细"' : ''}><div class="stat-icon ${color}">${ico}</div>
   <div class="stat-body"><div class="stat-label">${esc(label)}</div><div class="stat-value">${value}</div><div class="stat-sub">${esc(sub)}</div></div></div>`;
+function bindGoto(el) {
+  $$('[data-goto]', el).forEach(a => a.onclick = () => {
+    if (a.dataset.filter) {
+      try { STATE.filters[a.dataset.goto] = JSON.parse(a.dataset.filter); } catch {}
+    }
+    navigate(a.dataset.goto);
+  });
+}
 function detailItem(label, value) { return `<div class="detail-item"><label>${esc(label)}</label><div>${value || '-'}</div></div>`; }
 
 /* ---------------- 登录 / 启动 ---------------- */
@@ -220,12 +228,12 @@ async function renderDashboard(el) {
       <div class="head-actions"><button class="btn btn-primary" id="quick-contract">+ 新建合同</button>
         <button class="btn btn-ghost" id="quick-alert">查看风险</button></div></div>
     <div class="stats-grid">
-      ${statCard('blue', '▤', '合同总数', s.contractCount, `已备案 ${s.filed} 份`)}
-      ${statCard('purple', '¥', '签约金额', money(s.contractAmount), `已收 ${money(s.received)}`)}
-      ${statCard('orange', '◈', '待我审批', s.pending, '审批中心处理')}
-      ${statCard('green', '✓', '本月回款', money(s.monthReceived), `回款率 ${s.collectionRate}%`)}
-      ${statCard('red', '!', '风险预警', s.alerts, `高风险 ${s.highAlerts} 项`)}
-      ${statCard('cyan', '⌂', '可售房源', s.unitsAvailable, `共 ${s.unitsTotal} 套`)}
+      ${statCard('blue', '▤', '合同总数', s.contractCount, `已备案 ${s.filed} 份`, 'contracts', {})}
+      ${statCard('purple', '¥', '签约金额', money(s.contractAmount), `已收 ${money(s.received)}`, 'contracts', {})}
+      ${statCard('orange', '◈', '待我审批', s.pending, '审批中心处理', 'approvals', {})}
+      ${statCard('green', '✓', '本月回款', money(s.monthReceived), `回款率 ${s.collectionRate}%`, 'payments', {})}
+      ${statCard('red', '!', '风险预警', s.alerts, `高风险 ${s.highAlerts} 项`, 'risks', {})}
+      ${statCard('cyan', '⌂', '可售房源', s.unitsAvailable, `共 ${s.unitsTotal} 套`, 'units', { status: 'available' })}
     </div>
     <div class="grid-2">
       <div class="card"><div class="card-header"><h3>合同状态分布</h3><a class="link-btn" data-goto="contracts">合同台账 →</a></div>
@@ -255,7 +263,7 @@ async function renderDashboard(el) {
     </div>`;
   $('#quick-contract', el).onclick = () => openContractForm();
   $('#quick-alert', el).onclick = () => navigate('risks');
-  $$('[data-goto]', el).forEach(a => a.onclick = () => navigate(a.dataset.goto));
+  bindGoto(el);
   $$('[data-status]', el).forEach(row => row.onclick = () => {
     STATE.filters.contracts = { ...(STATE.filters.contracts || {}), status: row.dataset.status };
     navigate('contracts');
@@ -664,10 +672,10 @@ async function renderPayments(el) {
     <div class="page-head"><div><h2>回款管理</h2><p>共 ${data.total} 个回款期次 · 应收 ${money(plan)} · 已收 ${money(paid)}</p></div>
       <div class="head-actions"><button class="btn btn-ghost" id="export-payments">⇩ 导出 CSV</button></div></div>
     <div class="kpi-strip">
-      <div class="card kpi"><div class="k-label">应收总额</div><div class="k-value">${money(plan)}</div></div>
-      <div class="card kpi"><div class="k-label">已收总额</div><div class="k-value" style="color:var(--success)">${money(paid)}</div></div>
-      <div class="card kpi"><div class="k-label">待收余额</div><div class="k-value">${money(plan - paid)}</div></div>
-      <div class="card kpi"><div class="k-label">逾期金额</div><div class="k-value" style="color:var(--danger)">${money(overdue)}</div></div>
+      <div class="card kpi clickable-card" data-goto="payments" data-filter="{}"><div class="k-label">应收总额</div><div class="k-value">${money(plan)}</div></div>
+      <div class="card kpi clickable-card" data-goto="payments" data-filter="{&quot;status&quot;:&quot;paid&quot;}"><div class="k-label">已收总额</div><div class="k-value" style="color:var(--success)">${money(paid)}</div></div>
+      <div class="card kpi clickable-card" data-goto="payments" data-filter="{}"><div class="k-label">待收余额</div><div class="k-value">${money(plan - paid)}</div></div>
+      <div class="card kpi clickable-card" data-goto="payments" data-filter="{&quot;status&quot;:&quot;overdue&quot;}"><div class="k-label">逾期金额</div><div class="k-value" style="color:var(--danger)">${money(overdue)}</div></div>
     </div>
     <div class="card"><div class="card-body" style="padding-bottom:0"><div class="toolbar">
       <select class="filter" id="pay-status"><option value="">全部状态</option>${Object.entries({ paid: '已收清', partial: '部分收款', pending: '待回款', overdue: '已逾期' }).map(([v, l]) => `<option value="${v}" ${q.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -686,6 +694,7 @@ async function renderPayments(el) {
   $('#export-payments', el).onclick = () => { window.location.href = '/api/export/payments'; };
   $$('[data-receive]', el).forEach(b => b.onclick = () => openReceiveBox(Number(b.dataset.receive), b.dataset.contract, Number(b.dataset.rest), b.dataset.term));
   $$('[data-contract-detail]', el).forEach(b => b.onclick = () => openContractDetail(Number(b.dataset.contractDetail)));
+  bindGoto(el);
 }
 
 /* ---------------- 房源销控 ---------------- */
@@ -902,10 +911,10 @@ async function renderReports(el) {
     <div class="page-head"><div><h2>统计报表</h2><p>签约、回款、房源去化与团队业绩一屏掌握</p></div>
       <button class="btn btn-ghost" id="print-report">🖨 打印报表</button></div>
     <div class="stats-grid">
-      ${statCard('blue', '▤', '签约金额', money(s.contractAmount), `${s.contractCount} 份合同`)}
-      ${statCard('green', '¥', '累计回款', money(s.received), `回款率 ${s.collectionRate}%`)}
-      ${statCard('orange', '◈', '审批中', s.pending, '待处理')}
-      ${statCard('red', '!', '风险预警', s.alerts, `高风险 ${s.highAlerts}`)}
+      ${statCard('blue', '▤', '签约金额', money(s.contractAmount), `${s.contractCount} 份合同`, 'contracts', {})}
+      ${statCard('green', '¥', '累计回款', money(s.received), `回款率 ${s.collectionRate}%`, 'payments', {})}
+      ${statCard('orange', '◈', '审批中', s.pending, '待处理', 'approvals', {})}
+      ${statCard('red', '!', '风险预警', s.alerts, `高风险 ${s.highAlerts}`, 'risks', {})}
     </div>
     <div class="grid-2">
       <div class="card"><div class="card-header"><h3>签约趋势（近 6 月）</h3></div><div class="card-body">
@@ -913,7 +922,7 @@ async function renderReports(el) {
           <div class="bar" style="height:${t.cnt / maxTrend * 100}%"></div><div class="bar-label">${t.ym}</div></div>`).join('')}</div>` : '<div class="empty">暂无签约数据</div>'}
       </div></div>
       <div class="card"><div class="card-header"><h3>合同状态分布</h3></div><div class="card-body"><div class="chart-rows">
-        ${stages.map(x => `<div class="chart-row"><span>${x.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(4, x.count / Math.max(1, ...stages.map(y => y.count)) * 100)}%"></div></div><span style="text-align:right">${x.count} 份</span></div>`).join('')}
+        ${stages.map(x => `<div class="chart-row clickable-row" data-status="${x.stage}" title="查看「${x.label}」合同"><span>${x.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(4, x.count / Math.max(1, ...stages.map(y => y.count)) * 100)}%"></div></div><span style="text-align:right">${x.count} 份</span></div>`).join('')}
       </div></div></div>
     </div>
     <div class="card" style="margin-bottom:18px"><div class="card-header"><h3>项目货值与去化</h3></div>
@@ -922,11 +931,20 @@ async function renderReports(el) {
           <td>${p.unit_total ? Math.round((p.unit_total - p.unit_available) / p.unit_total * 100) : 0}%</td><td>${p.contracts}</td><td class="money">${money(p.amount)}</td></tr>`).join('')}
       </tbody></table></div></div>
     <div class="card"><div class="card-header"><h3>团队业绩</h3></div><div class="card-body">
-      ${sales.length ? sales.map(x => `<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:13px">
+      ${sales.length ? sales.map(x => `<div class="clickable-row" data-owner="${x.id}" style="margin-bottom:14px;padding:6px;border-radius:6px" title="查看该成员名下合同"><div style="display:flex;justify-content:space-between;font-size:13px">
         <span><b>${esc(x.display_name)}</b> <span class="tag gray">${esc(ROLE_LABEL[x.role] || x.role)}</span></span><span class="money">${money(x.amount)}</span></div>
         <div class="progress"><i style="width:${x.amount / maxSale * 100}%"></i></div>
         <div style="font-size:11px;color:var(--text-soft);margin-top:4px">成交 ${x.cnt} 份 · 回款 ${money(x.received)}</div></div>`).join('') : '<div class="empty">暂无团队业绩数据</div>'}
     </div></div>`;
+  bindGoto(el);
+  $$('[data-status]', el).forEach(row => row.onclick = () => {
+    STATE.filters.contracts = { ...(STATE.filters.contracts || {}), status: row.dataset.status };
+    navigate('contracts');
+  });
+  $$('[data-owner]', el).forEach(row => row.onclick = () => {
+    STATE.filters.contracts = { owner_id: row.dataset.owner };
+    navigate('contracts');
+  });
   $('#print-report', el).onclick = () => window.print();
 }
 
