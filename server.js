@@ -253,8 +253,19 @@ function listContracts(res, user, query) {
   const w = where.length ? ' WHERE ' + where.join(' AND ') : '';
   const rows = db.prepare(`${CONTRACT_SELECT}${w} ORDER BY c.id DESC LIMIT ? OFFSET ?`)
     .all(...args, Math.min(num(query.limit) || 500, 2000), Math.max(num(query.offset), 0));
+  /* 附加当前审批节点，避免前端写死「销售经理」 */
+  const doneMap = {};
+  for (const a of db.prepare('SELECT contract_id, step FROM approvals').all()) {
+    (doneMap[a.contract_id] ||= new Set()).add(a.step);
+  }
+  const decorated = rows.map(r => {
+    const flow = JSON.parse(r.flow || '[]');
+    const done = doneMap[r.id] || new Set();
+    const next = flow.find(s => !done.has(s));
+    return { ...r, next_step: next || null, next_step_label: next ? (APPROVAL_STEPS.find(s => s.key === next)?.label || next) : null };
+  });
   const total = db.prepare(`SELECT COUNT(*) n FROM contracts c LEFT JOIN customers cu ON cu.id=c.customer_id LEFT JOIN projects p ON p.id=c.project_id LEFT JOIN units u ON u.id=c.unit_id${w}`).get(...args).n;
-  return ok(res, { rows, total });
+  return ok(res, { rows: decorated, total });
 }
 function getContract(res, user, id) {
   const row = db.prepare(`${CONTRACT_SELECT} WHERE c.id=?`).get(id);
@@ -272,6 +283,23 @@ function checkContractAccess(user, row) {
 }
 
 /* ---------------- 统计 ---------------- */
+/* 当前用户真正可处理的待审批数：按合同的下一节点角色判断，管理员可处理任意节点 */
+function myPendingCount(user) {
+  if (user.role === 'sales') return 0;
+  const rows = db.prepare("SELECT id, flow FROM contracts WHERE status='pending'").all();
+  const doneMap = {};
+  for (const a of db.prepare('SELECT contract_id, step FROM approvals').all()) {
+    (doneMap[a.contract_id] ||= new Set()).add(a.step);
+  }
+  let n = 0;
+  for (const row of rows) {
+    const flow = JSON.parse(row.flow || '[]');
+    const done = doneMap[row.id] || new Set();
+    const next = flow.find(s => !done.has(s));
+    if (next && (user.role === 'admin' || APPROVAL_STEPS.find(s => s.key === next)?.role === user.role)) n++;
+  }
+  return n;
+}
 function statsOverview(user) {
   const sc = scopeClause(user, 'c');
   const w = sc.sql ? ' WHERE 1=1' + sc.sql : '';
@@ -281,11 +309,16 @@ function statsOverview(user) {
     SUM(CASE WHEN status='filed' THEN 1 ELSE 0 END) filed,
     SUM(CASE WHEN status='effective' THEN 1 ELSE 0 END) effective
     FROM contracts c${w}`).get(...args);
+  /* 签约金额只统计已通过审批/已生效/已备案的合同，剔除草稿、驳回、已解除 */
+  const signedWhere = w ? `${w} AND c.status IN ('approved','effective','filed')` : " WHERE c.status IN ('approved','effective','filed')";
+  const signed = db.prepare(`SELECT COALESCE(SUM(amount),0) amt FROM contracts c${signedWhere}`).get(...args).amt;
   const received = db.prepare(`SELECT COALESCE(SUM(r.amount),0) amt FROM receipts r JOIN contracts c ON c.id=(SELECT contract_id FROM payments WHERE id=r.payment_id)${w}`).get(...args).amt;
   const plan = db.prepare(`SELECT COALESCE(SUM(p.amount),0) amt FROM payments p JOIN contracts c ON c.id=p.contract_id${w}`).get(...args).amt;
   const monthWhere = sc.sql ? `${w} AND r.created_at >= date('now','start of month')` : " WHERE r.created_at >= date('now','start of month')";
   const monthReceived = db.prepare(`SELECT COALESCE(SUM(r.amount),0) amt FROM receipts r
     JOIN payments p ON p.id=r.payment_id JOIN contracts c ON c.id=p.contract_id${monthWhere}`).get(...args).amt;
+  const monthCount = db.prepare(`SELECT COUNT(*) n FROM receipts r
+    JOIN payments p ON p.id=r.payment_id JOIN contracts c ON c.id=p.contract_id${monthWhere}`).get(...args).n;
   const units = db.prepare(`SELECT
     SUM(CASE WHEN status='available' THEN 1 ELSE 0 END) available,
     SUM(CASE WHEN status='filed' THEN 1 ELSE 0 END) filed,
@@ -293,8 +326,11 @@ function statsOverview(user) {
   const alerts = buildAlerts(user);
   return {
     contractCount: contracts.n, contractAmount: Math.round(contracts.amt),
-    pending: contracts.pending || 0, filed: contracts.filed || 0, effective: contracts.effective || 0,
-    received: Math.round(received), plan: Math.round(plan), monthReceived: Math.round(monthReceived),
+    signedAmount: Math.round(signed),
+    pending: contracts.pending || 0, myPending: myPendingCount(user),
+    filed: contracts.filed || 0, effective: contracts.effective || 0,
+    received: Math.round(received), plan: Math.round(plan),
+    monthReceived: Math.round(monthReceived), monthReceiptCount: monthCount,
     collectionRate: plan ? Math.round(received / plan * 100) : 0,
     unitsAvailable: units.available || 0, unitsFiled: units.filed || 0, unitsTotal: units.total,
     alerts: alerts.length, highAlerts: alerts.filter(a => a.level === 'high').length,
@@ -311,7 +347,7 @@ function statsStages(user) {
 }
 function statsTrend(user) {
   const sc = scopeClause(user, 'c');
-  const where = sc.sql ? ' AND' + sc.sql.replace(/^ AND /, '') : '';
+  const where = sc.sql || '';
   return db.prepare(`SELECT substr(c.sign_date,1,7) ym, COUNT(*) cnt, COALESCE(SUM(c.amount),0) amt
     FROM contracts c WHERE c.sign_date IS NOT NULL${where}
     GROUP BY ym ORDER BY ym DESC LIMIT 6`).all(...sc.args).reverse();
@@ -341,7 +377,7 @@ function statsSales(user) {
 }
 function buildAlerts(user) {
   const sc = scopeClause(user, 'c');
-  const suffix = sc.sql ? ' AND' + sc.sql.replace(/^ AND /, '') : '';
+  const suffix = sc.sql || '';
   const plain = user.role === 'sales' ? ' AND owner_id=?' : '';
   const args = sc.args;
   const out = [];

@@ -384,9 +384,11 @@ function seed() {
         if (status === 'filed') paid = p.amount;
         else if (status === 'void') paid = i === 0 ? Math.round(p.amount * 0.5) : 0;
         else if (i === 0) paid = no % 3 === 0 ? 0 : Math.round(p.amount * (no % 2 ? 1 : 0.4));
+        /* 回款日期分布到不同月份，避免「本月回款」与「累计回款」永远同额 */
+        const receiptDate = no % 3 === 0 ? iso(-38) : iso(-3);
         const pr = mkPayment.run(id, p.term_no, p.name, p.amount, p.due_date, paid,
-          paid >= p.amount ? iso(-3) : null, iso(-40));
-        if (paid > 0) mkReceipt.run(Number(pr.lastInsertRowid), paid, 'transfer', `凭证-${no}-${i + 1}`, financeId, '银行转账', iso(-3));
+          paid >= p.amount ? receiptDate : null, iso(-40));
+        if (paid > 0) mkReceipt.run(Number(pr.lastInsertRowid), paid, 'transfer', `凭证-${no}-${i + 1}`, financeId, '银行转账', receiptDate);
       });
     }
     if (unit) {

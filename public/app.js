@@ -120,6 +120,20 @@ function bindGoto(el) {
     navigate(a.dataset.goto);
   });
 }
+/* 同一合同的多条预警合并展示，避免列表被单个合同刷屏 */
+function groupAlerts(alerts) {
+  const rank = { high: 0, medium: 1, low: 2 };
+  const map = new Map();
+  alerts.forEach(a => {
+    const key = a.contract_id || a.title;
+    if (!map.has(key)) map.set(key, { contract_id: a.contract_id, level: a.level, title: a.title, detail: a.detail, count: 0, types: [] });
+    const g = map.get(key);
+    g.count++;
+    if (!g.types.includes(a.type)) g.types.push(a.type);
+    if (rank[a.level] < rank[g.level]) { g.level = a.level; g.title = a.title; g.detail = a.detail; }
+  });
+  return [...map.values()].sort((a, b) => rank[a.level] - rank[b.level] || b.count - a.count);
+}
 function detailItem(label, value) { return `<div class="detail-item"><label>${esc(label)}</label><div>${value || '-'}</div></div>`; }
 
 /* ---------------- 登录 / 启动 ---------------- */
@@ -167,8 +181,12 @@ async function enterApp() {
 }
 function setupNav() {
   $$('.nav-item').forEach(item => item.onclick = () => navigate(item.dataset.view));
-  $('#menu-btn').onclick = () => $('#sidebar').classList.toggle('collapsed');
-  $('#sidebar-toggle').onclick = () => $('#sidebar').classList.toggle('collapsed');
+  const toggleSidebar = () => {
+    const collapsed = $('#sidebar').classList.toggle('collapsed');
+    $('#sidebar-toggle').textContent = collapsed ? '›' : '‹';
+  };
+  $('#menu-btn').onclick = toggleSidebar;
+  $('#sidebar-toggle').onclick = toggleSidebar;
   $('#logout-btn').onclick = async () => { try { await post('/logout'); } catch {} showLogin(); };
   $('#refresh-btn').onclick = () => render();
 }
@@ -183,7 +201,7 @@ async function updateBadges() {
   try {
     const s = await get('/stats/overview');
     $('#task-badge').textContent = '';
-    $('#approval-badge').textContent = s.pending || '';
+    $('#approval-badge').textContent = s.myPending || '';
     $('#risk-badge').textContent = s.alerts || '';
   } catch {}
 }
@@ -222,6 +240,7 @@ async function renderDashboard(el) {
     get('/payments?status=overdue'), get('/tasks?status=pending&limit=5'),
   ]);
   const max = Math.max(1, ...stages.map(x => x.count));
+  const alertGroups = groupAlerts(alerts);
   el.innerHTML = `
     <div class="page-head"><div><h2>你好，${esc(STATE.user.display_name)} 👋</h2>
       <p>销售合同经营概览 · ${new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</p></div>
@@ -229,9 +248,9 @@ async function renderDashboard(el) {
         <button class="btn btn-ghost" id="quick-alert">查看风险</button></div></div>
     <div class="stats-grid">
       ${statCard('blue', '▤', '合同总数', s.contractCount, `已备案 ${s.filed} 份`, 'contracts', {})}
-      ${statCard('purple', '¥', '签约金额', money(s.contractAmount), `已收 ${money(s.received)}`, 'contracts', {})}
-      ${statCard('orange', '◈', '待我审批', s.pending, '审批中心处理', 'approvals', {})}
-      ${statCard('green', '✓', '本月回款', money(s.monthReceived), `回款率 ${s.collectionRate}%`, 'payments', {})}
+      ${statCard('purple', '¥', '签约金额', money(s.signedAmount), `已收 ${money(s.received)}`, 'contracts', {})}
+      ${statCard('orange', '◈', '待我审批', s.myPending, '审批中心处理', 'approvals', {})}
+      ${statCard('green', '✓', '本月回款', money(s.monthReceived), `本月 ${s.monthReceiptCount} 笔 · 累计回款率 ${s.collectionRate}%`, 'payments', {})}
       ${statCard('red', '!', '风险预警', s.alerts, `高风险 ${s.highAlerts} 项`, 'risks', {})}
       ${statCard('cyan', '⌂', '可售房源', s.unitsAvailable, `共 ${s.unitsTotal} 套`, 'units', { status: 'available' })}
     </div>
@@ -241,10 +260,10 @@ async function renderDashboard(el) {
           <div class="chart-row clickable-row" data-status="${x.stage}" title="查看「${x.label}」合同"><span>${x.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(5, x.count / max * 100)}%"></div></div>
             <span style="text-align:right">${x.count} 份</span></div>`).join('')}</div></div></div>
       <div class="card"><div class="card-header"><h3>风险与待办提醒</h3><a class="link-btn" data-goto="risks">全部预警 →</a></div>
-        <div class="card-body">${alerts.length ? alerts.slice(0, 6).map(a => `
-          <div class="alert-item clickable-row" data-alert-contract="${a.contract_id}" data-alert-tab="${a.type.includes('回款') ? 'pay' : a.type === '审批滞留' ? 'flow' : 'info'}" title="查看合同详情">
-            <span class="alert-dot ${a.level}"></span><div><div class="alert-title">${esc(a.title)}</div>
-            <div class="alert-detail">${esc(a.type)} · ${esc(a.detail)}</div></div></div>`).join('')
+        <div class="card-body">${alertGroups.length ? alertGroups.slice(0, 6).map(g => `
+          <div class="alert-item clickable-row" data-alert-contract="${g.contract_id}" data-alert-tab="${g.types.some(t => t.includes('回款')) ? 'pay' : g.types.includes('审批滞留') ? 'flow' : 'info'}" title="查看合同详情">
+            <span class="alert-dot ${g.level}"></span><div><div class="alert-title">${esc(g.title)}${g.count > 1 ? ` <span class="tag gray">等 ${g.count} 项</span>` : ''}</div>
+            <div class="alert-detail">${esc(g.types.join(' / '))} · ${esc(g.detail)}</div></div></div>`).join('')
           : '<div class="empty"><div class="empty-ico">✓</div><p>暂无风险预警</p></div>'}</div></div>
     </div>
     <div class="grid-2">
@@ -601,10 +620,10 @@ async function renderApprovals(el) {
     <div class="page-head"><div><h2>审批中心</h2><p>共 ${data.total} 份合同待审批 · 按金额自动路由审批节点</p></div></div>
     <div class="card"><div class="table-wrap"><table><thead><tr><th>合同编号</th><th>客户 / 项目</th><th>金额</th><th>折扣</th><th>提交时间</th><th>当前节点</th><th>操作</th></tr></thead><tbody>
       ${data.rows.length ? data.rows.map(c => {
-        const flow = JSON.parse(c.flow || '[]');
+        const flowCls = { manager: 'blue', legal: 'purple', finance: 'orange', gm: 'red' };
         return `<tr><td class="cell-main">${esc(c.contract_no)}</td><td><div>${esc(c.customer_name)}</div><div class="cell-sub">${esc(c.project_name)}</div></td>
           <td class="money">${money(c.amount)}</td><td>${Number(c.discount) < 90 ? `<span class="tag red">${c.discount}%</span>` : `${c.discount}%`}</td>
-          <td>${dateStr(c.created_at)}</td><td>${tag({ green: { label: '销售经理', cls: 'blue' }, cyan: { label: '法务', cls: 'purple' }, orange: { label: '财务', cls: 'orange' } }, flow[0] ? 'green' : '')} <span style="font-size:12px;color:var(--text-soft)">按流程逐节点处理</span></td>
+          <td>${dateStr(c.created_at)}</td><td>${c.next_step_label ? `<span class="tag ${flowCls[c.next_step] || 'gray'}">${esc(c.next_step_label)}</span>` : '<span class="tag gray">流程已结束</span>'}</td>
           <td><div class="row-actions"><button class="link-btn" data-detail="${c.id}">查看流程</button>
             ${canReview() || canFinance() ? `<button class="link-btn" data-approve="${c.id}">处理审批</button>` : ''}</div></td></tr>`;
       }).join('') : `<tr><td colspan="7"><div class="empty"><div class="empty-ico">✓</div><p>暂无待审批合同</p></div></td></tr>`}
@@ -885,19 +904,21 @@ function openTemplateForm(id, t) {
 }
 async function renderRisks(el) {
   const alerts = await get('/stats/alerts');
+  const grouped = groupAlerts(alerts);
   const groups = { high: [], medium: [], low: [] };
-  alerts.forEach(a => groups[a.level].push(a));
+  grouped.forEach(a => groups[a.level].push(a));
   el.innerHTML = `
-    <div class="page-head"><div><h2>风险预警</h2><p>共 ${alerts.length} 项预警 · 规则覆盖回款逾期、备案超期、转签超期、审批滞留、折扣与条款风险</p></div></div>
+    <div class="page-head"><div><h2>风险预警</h2><p>共 ${alerts.length} 项预警 · 涉及 ${grouped.length} 份合同 · 规则覆盖回款逾期、备案超期、转签超期、审批滞留、折扣与条款风险</p></div></div>
     ${['high', 'medium', 'low'].map(level => {
       const list = groups[level];
       if (!list.length) return '';
       const label = { high: '高风险', medium: '中风险', low: '提醒' }[level];
       const color = { high: 'red', medium: 'orange', low: 'blue' }[level];
       return `<div class="card" style="margin-bottom:18px"><div class="card-header"><h3><span class="tag ${color}">${label}</span> ${list.length} 项</h3></div>
-        <div class="card-body">${list.map(a => `<div class="alert-item"><span class="alert-dot ${level}"></span>
-          <div style="flex:1"><div class="alert-title">${esc(a.title)}</div><div class="alert-detail">${esc(a.type)} · ${esc(a.detail)}</div></div>
-          <button class="link-btn" data-risk-contract="${a.contract_id}">查看合同</button></div>`).join('')}</div></div>`;
+        <div class="card-body">${list.map(g => `<div class="alert-item"><span class="alert-dot ${level}"></span>
+          <div style="flex:1"><div class="alert-title">${esc(g.title)}${g.count > 1 ? ` <span class="tag gray">${g.count} 项风险</span>` : ''}</div>
+            <div class="alert-detail">${esc(g.types.join(' / '))} · ${esc(g.detail)}</div></div>
+          <button class="link-btn" data-risk-contract="${g.contract_id}">查看合同</button></div>`).join('')}</div></div>`;
     }).join('') || '<div class="card"><div class="empty"><div class="empty-ico">✓</div><p>当前没有风险预警，业务运转良好</p></div></div>'}`;
   $$('[data-risk-contract]', el).forEach(b => b.onclick = () => openContractDetail(Number(b.dataset.riskContract)));
 }
@@ -911,7 +932,7 @@ async function renderReports(el) {
     <div class="page-head"><div><h2>统计报表</h2><p>签约、回款、房源去化与团队业绩一屏掌握</p></div>
       <button class="btn btn-ghost" id="print-report">🖨 打印报表</button></div>
     <div class="stats-grid">
-      ${statCard('blue', '▤', '签约金额', money(s.contractAmount), `${s.contractCount} 份合同`, 'contracts', {})}
+      ${statCard('blue', '▤', '签约金额', money(s.signedAmount), `${s.contractCount} 份合同`, 'contracts', {})}
       ${statCard('green', '¥', '累计回款', money(s.received), `回款率 ${s.collectionRate}%`, 'payments', {})}
       ${statCard('orange', '◈', '审批中', s.pending, '待处理', 'approvals', {})}
       ${statCard('red', '!', '风险预警', s.alerts, `高风险 ${s.highAlerts}`, 'risks', {})}
