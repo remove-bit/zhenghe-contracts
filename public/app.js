@@ -230,23 +230,24 @@ async function renderDashboard(el) {
     <div class="grid-2">
       <div class="card"><div class="card-header"><h3>合同状态分布</h3><a class="link-btn" data-goto="contracts">合同台账 →</a></div>
         <div class="card-body"><div class="chart-rows">${stages.filter(x => x.count).map(x => `
-          <div class="chart-row"><span>${x.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(5, x.count / max * 100)}%"></div></div>
+          <div class="chart-row clickable-row" data-status="${x.stage}" title="查看「${x.label}」合同"><span>${x.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(5, x.count / max * 100)}%"></div></div>
             <span style="text-align:right">${x.count} 份</span></div>`).join('')}</div></div></div>
       <div class="card"><div class="card-header"><h3>风险与待办提醒</h3><a class="link-btn" data-goto="risks">全部预警 →</a></div>
         <div class="card-body">${alerts.length ? alerts.slice(0, 6).map(a => `
-          <div class="alert-item"><span class="alert-dot ${a.level}"></span><div><div class="alert-title">${esc(a.title)}</div>
+          <div class="alert-item clickable-row" data-alert-contract="${a.contract_id}" data-alert-tab="${a.type.includes('回款') ? 'pay' : a.type === '审批滞留' ? 'flow' : 'info'}" title="查看合同详情">
+            <span class="alert-dot ${a.level}"></span><div><div class="alert-title">${esc(a.title)}</div>
             <div class="alert-detail">${esc(a.type)} · ${esc(a.detail)}</div></div></div>`).join('')
           : '<div class="empty"><div class="empty-ico">✓</div><p>暂无风险预警</p></div>'}</div></div>
     </div>
     <div class="grid-2">
       <div class="card"><div class="card-header"><h3>逾期回款 TOP</h3><a class="link-btn" data-goto="payments">回款管理 →</a></div>
         <div class="card-body">${payments.rows.length ? `<div class="table-wrap"><table><thead><tr><th>合同</th><th>期次</th><th>应收</th><th>到期</th></tr></thead><tbody>
-          ${payments.rows.slice(0, 5).map(p => `<tr><td class="cell-main">${esc(p.contract_no)}</td><td>${esc(p.name)}</td>
+          ${payments.rows.slice(0, 5).map(p => `<tr class="clickable-row" data-pay-contract="${p.contract_id}" title="查看合同回款详情"><td class="cell-main">${esc(p.contract_no)}</td><td>${esc(p.name)}</td>
             <td class="money">${money(p.amount - p.paid_amount)}</td><td>${dateStr(p.due_date)}</td></tr>`).join('')}
         </tbody></table></div>` : '<div class="empty">暂无逾期回款</div>'}</div></div>
       <div class="card"><div class="card-header"><h3>我的待办</h3><a class="link-btn" data-goto="tasks">全部任务 →</a></div>
         <div class="card-body">${tasks.rows.length ? tasks.rows.map(t => `
-          <div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)">
+          <div class="task-row clickable-row" data-task-contract="${t.contract_id || ''}" title="${t.contract_id ? '查看关联合同' : '查看任务列表'}">
             <span class="tag ${PRIORITY[t.priority].cls}">${PRIORITY[t.priority].label}</span>
             <div style="flex:1"><div style="font-weight:600;font-size:13px">${esc(t.title)}</div>
               <div style="font-size:11px;color:var(--text-soft)">${dateStr(t.due_date)} · ${esc(userName(t.owner_id))}</div></div>
@@ -255,7 +256,20 @@ async function renderDashboard(el) {
   $('#quick-contract', el).onclick = () => openContractForm();
   $('#quick-alert', el).onclick = () => navigate('risks');
   $$('[data-goto]', el).forEach(a => a.onclick = () => navigate(a.dataset.goto));
-  $$('[data-done-task]', el).forEach(b => b.onclick = async () => {
+  $$('[data-status]', el).forEach(row => row.onclick = () => {
+    STATE.filters.contracts = { ...(STATE.filters.contracts || {}), status: row.dataset.status };
+    navigate('contracts');
+  });
+  $$('[data-alert-contract]', el).forEach(row => row.onclick = () => {
+    if (row.dataset.alertContract) openContractDetail(Number(row.dataset.alertContract), row.dataset.alertTab || 'info');
+  });
+  $$('[data-pay-contract]', el).forEach(row => row.onclick = () => openContractDetail(Number(row.dataset.payContract), 'pay'));
+  $$('[data-task-contract]', el).forEach(row => row.onclick = () => {
+    if (row.dataset.taskContract) openContractDetail(Number(row.dataset.taskContract));
+    else navigate('tasks');
+  });
+  $$('[data-done-task]', el).forEach(b => b.onclick = async e => {
+    e.stopPropagation();
     try { await put('/tasks/' + b.dataset.doneTask, { status: 'done', completed_at: new Date().toISOString() }); toast('任务已完成'); render(); }
     catch (e) { toast(e.message, 'error'); }
   });
@@ -359,7 +373,7 @@ function openContractForm(id) {
   };
 }
 
-async function openContractDetail(id) {
+async function openContractDetail(id, tab = 'info') {
   const c = await get('/contracts/' + id);
   const flow = JSON.parse(c.flow || '[]');
   const approvalMap = Object.fromEntries(c.approvals.map(a => [a.step, a]));
@@ -443,6 +457,7 @@ async function openContractDetail(id) {
     $$('.tab-pane', m.el).forEach(p => p.classList.add('hidden'));
     $('#tab-' + t.dataset.tab, m.el).classList.remove('hidden');
   });
+  if (tab !== 'info') $$('.tab', m.el).find(t => t.dataset.tab === tab)?.click();
   const refresh = async () => { m.close(); await loadBase(); render(); };
   const simpleAction = (btn, action, payload, msg) => {
     const b = $(btn, m.el);
